@@ -26,8 +26,12 @@ void mips_detect_memory()
 {
     /* Step 1: Initialize basemem.
      * (When use real computer, CMOS tells us how many kilobytes there are). */
+	maxpa = 0x4000000;
+	basemem = 0x4000000;
+	extmem = 0x0;
 
     // Step 2: Calculate corresponding npage value.
+	npage = basemem >> PGSHIFT;
 
     printf("Physical memory: %dK available, ", (int)(maxpa / 1024));
     printf("base = %dK, extended = %dK\n", (int)(basemem / 1024),
@@ -172,18 +176,27 @@ void mips_vm_init()
 void
 page_init(void)
 {
+	struct Page *now, *last;
     /* Step 1: Initialize page_free_list. */
     /* Hint: Use macro `LIST_INIT` defined in include/queue.h. */
-
+	LIST_INIT(&page_free_list);
 
     /* Step 2: Align `freemem` up to multiple of BY2PG. */
-
+	ROUND(freemem, BY2PG);
 
     /* Step 3: Mark all memory blow `freemem` as used(set `pp_ref`
      * filed to 1) */
-
+	for (now = pages; page2kva(now) < freemem; now++)
+	{
+		now->pp_ref = 1;
+	}
 
     /* Step 4: Mark the other memory as free. */
+	for (now = &pages[PPN(PADDR(freemem))]; page2ppn(now) < npage; now++)
+	{
+		now -> pp_ref = 0;
+		LIST_INSERT_HEAD(&page_free_list, now, pp_link);
+	}
 }
 
 /*Overview:
@@ -206,12 +219,19 @@ page_alloc(struct Page **pp)
     struct Page *ppage_temp;
 
     /* Step 1: Get a page from free memory. If fails, return the error code.*/
-
+	if (LIST_EMPTY(&page_free_list)) 
+	{
+		return -E_NO_MEM;
+	}
+	ppage_temp = LIST_FIRST(&page_free_list);
+	LIST_REMOVE(ppage_temp, pp_link);
 
     /* Step 2: Initialize this page.
      * Hint: use `bzero`. */
+	bzero(page2kva(ppage_temp), BY2PG);
 
-
+	*pp = ppage_temp;
+	return 0;
 }
 
 /*Overview:
@@ -222,10 +242,17 @@ void
 page_free(struct Page *pp)
 {
     /* Step 1: If there's still virtual address refers to this page, do nothing. */
-
+	if (pp -> pp_ref > 0)
+	{
+		return;
+	}
 
     /* Step 2: If the `pp_ref` reaches to 0, mark this page as free and return. */
-
+	if (pp->pp_ref == 0)
+	{
+		LIST_INSERT_HEAD(&page_free_list, pp, pp_link);
+		return;
+	}
 
     /* If the value of `pp_ref` less than 0, some error must occurred before,
      * so PANIC !!! */
