@@ -53,27 +53,22 @@ static void *alloc(u_int n, u_int align, int clear)
     /* Initialize `freemem` if this is the first time. The first virtual address that the
      * linker did *not* assign to any kernel code or global variables. */
     if (freemem == 0) {
-        freemem = (u_long)end;
+        freemem = 0x80000000 + (u_long)maxpa;
     }
 
-    /* Step 1: Round up `freemem` up to be aligned properly */
-    freemem = ROUND(freemem, align);
-
-    /* Step 2: Save current value of `freemem` as allocated chunk. */
+    freemem = ROUNDDOWN(freemem, align);
+    freemem = freemem - n;
     alloced_mem = freemem;
 
-    /* Step 3: Increase `freemem` to record allocation. */
-    freemem = freemem + n;
-
-    /* Step 4: Clear allocated chunk if parameter `clear` is set. */
-    if (clear) {
-        bzero((void *)alloced_mem, n);
-    }
 
     // We're out of memory, PANIC !!
-    if (PADDR(freemem) >= maxpa) {
+    if (freemem < (u_long)end) {
         panic("out of memorty\n");
         return (void *)-E_NO_MEM;
+    }
+
+    if (clear) {
+        bzero((void *)alloced_mem, n);
     }
 
     /* Step 5: return allocated chunk. */
@@ -189,7 +184,7 @@ void mips_vm_init()
   Hint:
 	Use `LIST_INSERT_HEAD` to insert something to list.*/
 void
-page_init(void)
+page_init(int mode)
 {
 	struct Page *now, *last;
     /* Step 1: Initialize page_free_list. */
@@ -201,17 +196,26 @@ page_init(void)
 
     /* Step 3: Mark all memory blow `freemem` as used(set `pp_ref`
      * filed to 1) */
-	for (now = pages; page2kva(now) < freemem; now++)
-	{
-		now->pp_ref = 1;
-	}
-
+	int i;
+    int n = PADDR(freemem) / BY2PG;
+    for( i = 0; i < n; i++ ){
+        pages[i].pp_ref = 1;
+    }
     /* Step 4: Mark the other memory as free. */
-	for (now = &pages[PPN(PADDR(freemem))]; page2ppn(now) < npage; now++)
-	{
-		now -> pp_ref = 0;
-		LIST_INSERT_HEAD(&page_free_list, now, pp_link);
-	}
+	if(mode!=0){
+        	for( i = npage-1; i >= n; i--){
+            		pages[i].pp_ref = 0;
+           	 LIST_INSERT_HEAD(&page_free_list,&pages[i],pp_link);
+       	 }
+    	}else{
+        	for( i = n; i < npage; i++){
+            		pages[i].pp_ref = 0;
+           	 	LIST_INSERT_HEAD(&page_free_list,&pages[i],pp_link);
+       		 }
+    	}
+
+
+
 }
 
 /*Overview:
@@ -693,3 +697,27 @@ void pageout(int va, int context)
     printf("pageout:\t@@@___0x%x___@@@  ins a page \n", va);
 }
 
+int mode_count = 0;
+
+void get_page_status(int pa) 
+{
+	int status;
+	struct Page *page = pa2page((u_long)pa);
+	struct Page *var_page;
+	LIST_FOREACH(var_page, &page_free_list, pp_link) {
+		if (var_page == page) {
+			status = 1;
+			printf("times:%d,page status:%d\n",++mode_count,status);
+			return;
+		}
+	}
+	if (page->pp_ref == 0) {
+		status = 2;
+	}
+	else {
+		status = 3;
+	}
+
+	printf("times:%d,page status:%d\n",++mode_count,status);
+	return;
+}
